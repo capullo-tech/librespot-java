@@ -278,6 +278,17 @@ public class Player implements Closeable {
         state.updated();
     }
 
+    public void notifyAboutUpdatedQueue() {
+        ArrayList<ContextTrack> tracks = new ArrayList<>(state.getPrevTracks());
+        tracks.add(state.getCurrentTrack());
+        tracks.addAll(state.getNextTracks(true));
+        events.queueChanged(tracks);
+    }
+
+    public void notifyAboutUpdatedContextDescription(String newText) {
+        events.contextDescriptionChanged(newText);
+    }
+
     @NotNull
     public Future<Player> ready() {
         CompletableFuture<Player> future = new CompletableFuture<>();
@@ -827,6 +838,17 @@ public class Player implements Closeable {
     }
 
     /**
+     * @return The current seek position of the player or {@code -1} if unavailable (most likely if it's playing an episode).
+     */
+    public int seekTime() {
+        try {
+            return playerSession == null ? -1 : playerSession.currentSeekTime();
+        } catch (Decoder.CannotGetTimeException ex) {
+            return -1;
+        }
+    }
+
+    /**
      * @return The current position of the player or {@code -1} if unavailable (most likely if it's playing an episode).
      */
     public int time() {
@@ -889,6 +911,10 @@ public class Player implements Closeable {
         void onStartedLoading(@NotNull Player player);
 
         void onFinishedLoading(@NotNull Player player);
+
+        default void onQueueChanged(@NotNull Player player, @NotNull List<ContextTrack> queue) {}
+
+        default void onContextDescriptionChanged(@NotNull Player player, @Nullable String description) {}
     }
 
     /**
@@ -1145,6 +1171,16 @@ public class Player implements Closeable {
                 executorService.execute(() -> l.onInactiveSession(Player.this, timeout));
         }
 
+        void queueChanged(List<ContextTrack> queue) {
+            for (EventsListener l : new ArrayList<>(listeners))
+                executorService.execute(() -> l.onQueueChanged(Player.this, queue));
+        }
+
+        void contextDescriptionChanged(String description) {
+            for (EventsListener l : new ArrayList<>(listeners))
+                executorService.execute(() -> l.onContextDescriptionChanged(Player.this, description));
+        }
+
         private void panicState() {
             for (EventsListener l : new ArrayList<>(listeners))
                 executorService.execute(() -> l.onPanicState(Player.this));
@@ -1164,5 +1200,17 @@ public class Player implements Closeable {
 
             listeners.clear();
         }
+    }
+
+    // ============================================== //
+    // ============ JSP-specific patches ============ //
+    // ============================================== //
+
+    public StateWrapper getStateWrapper() {
+        return state;
+    }
+
+    public void callPlayFromObj(JsonObject obj) {
+        this.handlePlay(obj);
     }
 }
