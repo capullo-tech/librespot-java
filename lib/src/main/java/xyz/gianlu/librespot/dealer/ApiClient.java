@@ -51,11 +51,13 @@ public final class ApiClient {
     private static final Logger LOGGER = LoggerFactory.getLogger(ApiClient.class);
     private final Session session;
     private final String baseUrl;
+    private final String trackBaseUrl;
     private String clientToken = null;
 
     public ApiClient(@NotNull Session session) {
         this.session = session;
         this.baseUrl = "https://" + session.apResolver().getRandomSpclient();
+        this.trackBaseUrl = "https://spclient.wg.spotify.com";
     }
 
     @NotNull
@@ -87,6 +89,23 @@ public final class ApiClient {
         request.addHeader("Authorization", "Bearer " + session.tokens().get("playlist-read"));
         request.addHeader("client-token", clientToken);
         request.url(baseUrl + suffix);
+        return request.build();
+    }
+
+    @NotNull
+    private Request buildTrackRequest(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, MercuryClient.MercuryException {
+        if (clientToken == null) {
+            ClientToken.ClientTokenResponse resp = clientToken();
+            clientToken = resp.getGrantedToken().getToken();
+            LOGGER.debug("Updated client token: {}", clientToken);
+        }
+
+        Request.Builder request = new Request.Builder();
+        request.method(method, body);
+        if (headers != null) request.headers(headers);
+        request.addHeader("Authorization", "Bearer " + session.tokens().get("playlist-read"));
+        request.addHeader("client-token", clientToken);
+        request.url(trackBaseUrl + suffix);
         return request.build();
     }
 
@@ -127,8 +146,33 @@ public final class ApiClient {
     }
 
     @NotNull
+    public Response sendTrackRequest(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body, int tries) throws IOException, MercuryClient.MercuryException {
+        IOException lastEx;
+        do {
+            try {
+                Response resp = session.client().newCall(buildTrackRequest(method, suffix, headers, body)).execute();
+                if (resp.code() == 503) {
+                    lastEx = new StatusCodeException(resp);
+                    continue;
+                }
+
+                return resp;
+            } catch (IOException ex) {
+                lastEx = ex;
+            }
+        } while (tries-- > 1);
+
+        throw lastEx;
+    }
+
+    @NotNull
     public Response send(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, MercuryClient.MercuryException {
         return send(method, suffix, headers, body, 1);
+    }
+
+    @NotNull
+    public Response sendTrackRequest(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, MercuryClient.MercuryException {
+        return sendTrackRequest(method, suffix, headers, body, 1);
     }
 
     public void putConnectState(@NotNull String connectionId, @NotNull Connect.PutStateRequest proto) throws IOException, MercuryClient.MercuryException {
@@ -143,7 +187,7 @@ public final class ApiClient {
 
     @NotNull
     public Metadata.Track getMetadata4Track(@NotNull TrackId track) throws IOException, MercuryClient.MercuryException {
-        try (Response resp = send("GET", "/metadata/4/track/" + track.hexId(), null, null)) {
+        try (Response resp = sendTrackRequest("GET", "/metadata/4/track/" + track.hexId(), null, null)) {
             StatusCodeException.checkStatus(resp);
 
             ResponseBody body;
