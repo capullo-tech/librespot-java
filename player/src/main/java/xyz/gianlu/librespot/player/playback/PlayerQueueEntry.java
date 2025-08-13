@@ -112,7 +112,7 @@ class PlayerQueueEntry extends PlayerQueue.Entry implements Closeable, Runnable,
             stream = PlayableContentFeeder.LoadedStream.forLocalFile((LocalId) playable,
                     new File(conf.localFilesPath, ((LocalId) playable).name()));
         else
-            stream = session.contentFeeder().load(playable, new VorbisOnlyAudioQuality(conf.preferredQuality), preload, this);
+            stream = session.contentFeeder().load(playable, conf.preferredQualityPicker != null ? conf.preferredQualityPicker : new VorbisOnlyAudioQuality(conf.preferredQuality), preload, this);
 
         metadata = stream.metadata;
         contentMetrics = stream.metrics;
@@ -177,6 +177,19 @@ class PlayerQueueEntry extends PlayerQueue.Entry implements Closeable, Runnable,
      */
     int getTime() throws Decoder.CannotGetTimeException {
         return decoder == null ? -1 : decoder.time();
+    }
+
+    /**
+     * Returns the current seek position. This might not be the real player position if it's called right after a seek.
+     *
+     * @return The current seek position of the player or {@code -1} if not ready.
+     * @throws Decoder.CannotGetTimeException If the time is unavailable for the codec being used.
+     */
+    int getSeekTime() throws Decoder.CannotGetTimeException {
+        int seekTime = this.seekTime;
+        if (seekTime != -1) return seekTime;
+        if (decoder != null) return decoder.time();
+        return -1;
     }
 
     /**

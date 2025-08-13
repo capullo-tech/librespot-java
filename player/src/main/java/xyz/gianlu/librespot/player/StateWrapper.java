@@ -224,6 +224,11 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
     }
 
     @Nullable
+    public String getContextDescription() {
+        return pages.currentPageDescription();
+    }
+
+    @Nullable
     public String getContextUrl() {
         return state.getContextUrl();
     }
@@ -982,6 +987,8 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
 
             for (int i = index + 1; i < Math.min(tracks.size(), index + 1 + MAX_NEXT_TRACKS); i++)
                 state.addNextTracks(ProtoUtils.toProvidedTrack(tracks.get(i), getContextUri()));
+
+            player.notifyAboutUpdatedQueue();
         }
 
         void updateTrackDuration(int duration) {
@@ -1154,6 +1161,8 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
             checkComplete();
             if (areAllUnplayable(tracks))
                 throw AbsSpotifyContext.UnsupportedContextException.cannotPlayAnything();
+
+            player.notifyAboutUpdatedContextDescription(pages.currentPageDescription());
 
             try {
                 if (track != null) enrichCurrentTrack(track);
@@ -1538,5 +1547,13 @@ public class StateWrapper implements DeviceStateHandler.Listener, DealerClient.M
 
             updateMetadataFor(index, key, value);
         }
+    }
+
+    // ============================================== //
+    // ============ JSP-specific patches ============ //
+    // ============================================== //
+
+    public PlayerState.Builder getState() {
+        return state;
     }
 }
