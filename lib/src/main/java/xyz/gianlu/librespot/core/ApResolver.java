@@ -29,7 +29,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.io.Reader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -128,7 +127,8 @@ public final class ApResolver {
 
     @NotNull
     public String getRandomSpclient() {
-        return getRandomOf("spclient");
+        return "spclient.wg.spotify.com:443";
+        //return getRandomOf("spclient");
     }
 
     @NotNull

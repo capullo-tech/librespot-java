@@ -23,6 +23,7 @@ import com.spotify.clienttoken.data.v0.Connectivity;
 import com.spotify.clienttoken.http.v0.ClientToken;
 import com.spotify.connectstate.Connect;
 import com.spotify.extendedmetadata.ExtendedMetadata;
+import com.spotify.extendedmetadata.ExtensionKindOuterClass;
 import com.spotify.metadata.Metadata;
 import com.spotify.playlist4.Playlist4ApiProto;
 import okhttp3.*;
@@ -33,8 +34,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import xyz.gianlu.librespot.Version;
 import xyz.gianlu.librespot.core.Session;
+import xyz.gianlu.librespot.core.TokenProvider;
 import xyz.gianlu.librespot.json.StationsWrapper;
-import xyz.gianlu.librespot.mercury.MercuryClient;
 import xyz.gianlu.librespot.mercury.MercuryRequests;
 import xyz.gianlu.librespot.metadata.*;
 
@@ -74,7 +75,7 @@ public final class ApiClient {
     }
 
     @NotNull
-    private Request buildRequest(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, MercuryClient.MercuryException {
+    private Request buildRequest(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, TokenProvider.TokenException {
         if (clientToken == null) {
             ClientToken.ClientTokenResponse resp = clientToken();
             clientToken = resp.getGrantedToken().getToken();
@@ -84,13 +85,13 @@ public final class ApiClient {
         Request.Builder request = new Request.Builder();
         request.method(method, body);
         if (headers != null) request.headers(headers);
-        request.addHeader("Authorization", "Bearer " + session.tokens().get("playlist-read"));
+        request.addHeader("Authorization", "Bearer " + session.tokens().get());
         request.addHeader("client-token", clientToken);
         request.url(baseUrl + suffix);
         return request.build();
     }
 
-    public void sendAsync(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body, @NotNull Callback callback) throws IOException, MercuryClient.MercuryException {
+    public void sendAsync(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body, @NotNull Callback callback) throws IOException, TokenProvider.TokenException {
         session.client().newCall(buildRequest(method, suffix, headers, body)).enqueue(callback);
     }
 
@@ -98,16 +99,16 @@ public final class ApiClient {
      * Sends a request to the Spotify API.
      *
      * @param method  The request method
-     * @param suffix  The suffix to be appended to {@link #baseUrl} also know as path
+     * @param suffix  The suffix to be appended to {@link #baseUrl} also known as path
      * @param headers Additional headers
      * @param body    The request body
      * @param tries   How many times the request should be reattempted (0 = none)
      * @return The response
      * @throws IOException                    The last {@link IOException} thrown by {@link Call#execute()}
-     * @throws MercuryClient.MercuryException If the API token couldn't be requested
+     * @throws TokenProvider.TokenException If the API token couldn't be requested
      */
     @NotNull
-    public Response send(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body, int tries) throws IOException, MercuryClient.MercuryException {
+    public Response send(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body, int tries) throws IOException, TokenProvider.TokenException {
         IOException lastEx;
         do {
             try {
@@ -127,11 +128,11 @@ public final class ApiClient {
     }
 
     @NotNull
-    public Response send(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, MercuryClient.MercuryException {
+    public Response send(@NotNull String method, @NotNull String suffix, @Nullable Headers headers, @Nullable RequestBody body) throws IOException, TokenProvider.TokenException {
         return send(method, suffix, headers, body, 1);
     }
 
-    public void putConnectState(@NotNull String connectionId, @NotNull Connect.PutStateRequest proto) throws IOException, MercuryClient.MercuryException {
+    public void putConnectState(@NotNull String connectionId, @NotNull Connect.PutStateRequest proto) throws IOException, TokenProvider.TokenException {
         try (Response resp = send("PUT", "/connect-state/v1/devices/" + session.deviceId(), new Headers.Builder()
                 .add("X-Spotify-Connection-Id", connectionId).build(), protoBody(proto), 5 /* We want this to succeed */)) {
             if (resp.code() == 413)
@@ -142,62 +143,52 @@ public final class ApiClient {
     }
 
     @NotNull
-    public Metadata.Track getMetadata4Track(@NotNull TrackId track) throws IOException, MercuryClient.MercuryException {
-        try (Response resp = send("GET", "/metadata/4/track/" + track.hexId(), null, null)) {
-            StatusCodeException.checkStatus(resp);
+    public Metadata.Track getMetadata4Track(@NotNull TrackId track) throws IOException, TokenProvider.TokenException {
+        ExtendedMetadata.BatchedExtensionResponse response = getExtendedMetadata(ExtensionKindOuterClass.ExtensionKind.TRACK_V4, track);
 
-            ResponseBody body;
-            if ((body = resp.body()) == null) throw new IOException();
-            return Metadata.Track.parseFrom(body.byteStream());
-        }
+        checkExtendedMetadataResponse(response);
+
+        return Metadata.Track.parseFrom(response.getExtendedMetadata(0).getExtensionData(0).getExtensionData().getValue());
     }
 
     @NotNull
-    public Metadata.Episode getMetadata4Episode(@NotNull EpisodeId episode) throws IOException, MercuryClient.MercuryException {
-        try (Response resp = send("GET", "/metadata/4/episode/" + episode.hexId(), null, null)) {
-            StatusCodeException.checkStatus(resp);
+    public Metadata.Episode getMetadata4Episode(@NotNull EpisodeId episode) throws IOException, TokenProvider.TokenException {
+        ExtendedMetadata.BatchedExtensionResponse response = getExtendedMetadata(ExtensionKindOuterClass.ExtensionKind.EPISODE_V4, episode);
 
-            ResponseBody body;
-            if ((body = resp.body()) == null) throw new IOException();
-            return Metadata.Episode.parseFrom(body.byteStream());
-        }
+        checkExtendedMetadataResponse(response);
+
+        return Metadata.Episode.parseFrom(response.getExtendedMetadata(0).getExtensionData(0).getExtensionData().getValue());
     }
 
     @NotNull
-    public Metadata.Album getMetadata4Album(@NotNull AlbumId album) throws IOException, MercuryClient.MercuryException {
-        try (Response resp = send("GET", "/metadata/4/album/" + album.hexId(), null, null)) {
-            StatusCodeException.checkStatus(resp);
+    public Metadata.Album getMetadata4Album(@NotNull AlbumId album) throws IOException, TokenProvider.TokenException {
+        ExtendedMetadata.BatchedExtensionResponse response = getExtendedMetadata(ExtensionKindOuterClass.ExtensionKind.ALBUM_V4, album);
 
-            ResponseBody body;
-            if ((body = resp.body()) == null) throw new IOException();
-            return Metadata.Album.parseFrom(body.byteStream());
-        }
+        checkExtendedMetadataResponse(response);
+
+        return Metadata.Album.parseFrom(response.getExtendedMetadata(0).getExtensionData(0).getExtensionData().getValue());
     }
 
     @NotNull
-    public Metadata.Artist getMetadata4Artist(@NotNull ArtistId artist) throws IOException, MercuryClient.MercuryException {
-        try (Response resp = send("GET", "/metadata/4/artist/" + artist.hexId(), null, null)) {
-            StatusCodeException.checkStatus(resp);
+    public Metadata.Artist getMetadata4Artist(@NotNull ArtistId artist) throws IOException, TokenProvider.TokenException {
+        ExtendedMetadata.BatchedExtensionResponse response = getExtendedMetadata(ExtensionKindOuterClass.ExtensionKind.ARTIST_V4, artist);
 
-            ResponseBody body;
-            if ((body = resp.body()) == null) throw new IOException();
-            return Metadata.Artist.parseFrom(body.byteStream());
-        }
+        checkExtendedMetadataResponse(response);
+
+        return Metadata.Artist.parseFrom(response.getExtendedMetadata(0).getExtensionData(0).getExtensionData().getValue());
     }
 
     @NotNull
-    public Metadata.Show getMetadata4Show(@NotNull ShowId show) throws IOException, MercuryClient.MercuryException {
-        try (Response resp = send("GET", "/metadata/4/show/" + show.hexId(), null, null)) {
-            StatusCodeException.checkStatus(resp);
+    public Metadata.Show getMetadata4Show(@NotNull ShowId show) throws IOException, TokenProvider.TokenException {
+        ExtendedMetadata.BatchedExtensionResponse response = getExtendedMetadata(ExtensionKindOuterClass.ExtensionKind.SHOW_V4, show);
 
-            ResponseBody body;
-            if ((body = resp.body()) == null) throw new IOException();
-            return Metadata.Show.parseFrom(body.byteStream());
-        }
+        checkExtendedMetadataResponse(response);
+
+        return Metadata.Show.parseFrom(response.getExtendedMetadata(0).getExtensionData(0).getExtensionData().getValue());
     }
 
     @NotNull
-    public EntityCanvazResponse getCanvases(@NotNull EntityCanvazRequest req) throws IOException, MercuryClient.MercuryException {
+    public EntityCanvazResponse getCanvases(@NotNull EntityCanvazRequest req) throws IOException, TokenProvider.TokenException {
         try (Response resp = send("POST", "/canvaz-cache/v0/canvases", null, protoBody(req))) {
             StatusCodeException.checkStatus(resp);
 
@@ -207,8 +198,19 @@ public final class ApiClient {
         }
     }
 
+    public void checkExtendedMetadataResponse(ExtendedMetadata.BatchedExtensionResponse response) throws IOException {
+        if (response.getExtendedMetadataCount() == 0)
+            throw new IOException("No metadata in BatchedExtensionResponse");
+
+        if (response.getExtendedMetadata(0).getExtensionDataCount() == 0)
+            throw new IOException("No metadata in ExtendedMetadata in BatchedExtensionResponse");
+
+        if (response.getExtendedMetadata(0).getExtensionData(0).getHeader().getStatusCode() != 200)
+            throw new IOException("Bad status code for metadata: " + response.getExtendedMetadata(0).getExtensionData(0).getHeader().getStatusCode());
+    }
+
     @NotNull
-    public ExtendedMetadata.BatchedExtensionResponse getExtendedMetadata(@NotNull ExtendedMetadata.BatchedEntityRequest req) throws IOException, MercuryClient.MercuryException {
+    public ExtendedMetadata.BatchedExtensionResponse getExtendedMetadata(@NotNull ExtendedMetadata.BatchedEntityRequest req) throws IOException, TokenProvider.TokenException {
         try (Response resp = send("POST", "/extended-metadata/v0/extended-metadata", null, protoBody(req))) {
             StatusCodeException.checkStatus(resp);
 
@@ -219,7 +221,25 @@ public final class ApiClient {
     }
 
     @NotNull
-    public Playlist4ApiProto.SelectedListContent getPlaylist(@NotNull PlaylistId id) throws IOException, MercuryClient.MercuryException {
+    public ExtendedMetadata.BatchedExtensionResponse getExtendedMetadata(@NotNull ExtensionKindOuterClass.ExtensionKind extensionKind, @NotNull SpotifyId spotifyId) throws IOException, TokenProvider.TokenException {
+        try (Response resp = send("POST", "/extended-metadata/v0/extended-metadata", null, protoBody(ExtendedMetadata.BatchedEntityRequest.newBuilder()
+                .addEntityRequest(ExtendedMetadata.EntityRequest.newBuilder()
+                        .setEntityUri(spotifyId.toSpotifyUri())
+                        .addQuery(ExtendedMetadata.ExtensionQuery.newBuilder()
+                                .setExtensionKind(extensionKind)
+                                .build())
+                        .build())
+                .build()))) {
+            StatusCodeException.checkStatus(resp);
+
+            ResponseBody body;
+            if ((body = resp.body()) == null) throw new IOException();
+            return ExtendedMetadata.BatchedExtensionResponse.parseFrom(body.byteStream());
+        }
+    }
+
+    @NotNull
+    public Playlist4ApiProto.SelectedListContent getPlaylist(@NotNull PlaylistId id) throws IOException, TokenProvider.TokenException {
         try (Response resp = send("GET", "/playlist/v2/playlist/" + id.id(), null, null)) {
             StatusCodeException.checkStatus(resp);
 
@@ -231,7 +251,7 @@ public final class ApiClient {
     }
 
     @NotNull
-    public JsonObject getUserProfile(@NotNull String id, @Nullable Integer playlistLimit, @Nullable Integer artistLimit) throws IOException, MercuryClient.MercuryException {
+    public JsonObject getUserProfile(@NotNull String id, @Nullable Integer playlistLimit, @Nullable Integer artistLimit) throws IOException, TokenProvider.TokenException {
         StringBuilder url = new StringBuilder();
         url.append("/user-profile-view/v3/profile/");
         url.append(id);
@@ -262,7 +282,7 @@ public final class ApiClient {
     }
 
     @NotNull
-    public JsonObject getUserFollowers(@NotNull String id) throws IOException, MercuryClient.MercuryException {
+    public JsonObject getUserFollowers(@NotNull String id) throws IOException, TokenProvider.TokenException {
         try (Response resp = send("GET", "/user-profile-view/v3/profile/" + id + "/followers", null, null)) {
             StatusCodeException.checkStatus(resp);
 
@@ -273,7 +293,7 @@ public final class ApiClient {
     }
 
     @NotNull
-    public JsonObject getUserFollowing(@NotNull String id) throws IOException, MercuryClient.MercuryException {
+    public JsonObject getUserFollowing(@NotNull String id) throws IOException, TokenProvider.TokenException {
         try (Response resp = send("GET", "/user-profile-view/v3/profile/" + id + "/following", null, null)) {
             StatusCodeException.checkStatus(resp);
 
@@ -284,7 +304,7 @@ public final class ApiClient {
     }
 
     @NotNull
-    public JsonObject getRadioForTrack(@NotNull PlayableId id) throws IOException, MercuryClient.MercuryException {
+    public JsonObject getRadioForTrack(@NotNull PlayableId id) throws IOException, TokenProvider.TokenException {
         try (Response resp = send("GET", "/inspiredby-mix/v2/seed_to_playlist/" + id.toSpotifyUri() + "?response-format=json", null, null)) {
             StatusCodeException.checkStatus(resp);
 
@@ -295,7 +315,7 @@ public final class ApiClient {
     }
 
     @NotNull
-    public StationsWrapper getApolloStation(@NotNull String context, @NotNull List<String> prevTracks, int count, boolean autoplay) throws IOException, MercuryClient.MercuryException {
+    public StationsWrapper getApolloStation(@NotNull String context, @NotNull List<String> prevTracks, int count, boolean autoplay) throws IOException, TokenProvider.TokenException {
         StringBuilder prevTracksStr = new StringBuilder();
         for (int i = 0; i < prevTracks.size(); i++) {
             if (i != 0) prevTracksStr.append(",");
